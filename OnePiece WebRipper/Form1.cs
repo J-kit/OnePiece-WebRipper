@@ -31,24 +31,19 @@ namespace OnePiece_WebRipper
 				{
 					rsLst.Add(JsonConvert.DeserializeObject<VideoInfo[]>(item));
 				}
-				_resList.AddRange(rsLst.SelectMany(m=>m).Distinct().OrderByDescending(m=>m.VideoName));
-
+				_resList.AddRange(rsLst.SelectMany(m => m).Distinct().OrderBy(m => m.VideoName));
 			}
-			foreach (var item in _resList)
-			{
-				dgvInfo.AddRow<DataGridViewTextBoxCell>(new[] { item.Folge.ToString(), item.VideoName, item.VideoLink, "0" });
-			}
+			AddRange(_resList);
 		}
 
 		private async void butResolve_Click(object sender, EventArgs e)
 		{
-
 			var start = 651;
 			var max = 700;
 
 			for (int i = start; i < max; i++)
 			{
-				if (_resList.Any(m=>m.Folge == i))
+				if (_resList.Any(m => m.Folge == i))
 				{
 					continue;
 				}
@@ -56,14 +51,67 @@ namespace OnePiece_WebRipper
 				foreach (var item in erg)
 				{
 					item.Folge = i;
-					dgvInfo.AddRow<DataGridViewTextBoxCell>(new[] { i.ToString(), item.VideoName, item.VideoLink, "0" });
+					AddRow(item);
 				}
 				_resList.AddRange(erg);
 				File.AppendAllText("Results.txt", Newtonsoft.Json.JsonConvert.SerializeObject(erg) + Environment.NewLine);
 				dgvInfo.AutoResizeColumns();
 			}
-			
 		}
+		private static Regex _fileNameRex = new Regex(@"(\d+).*?\| (.*)", RegexOptions.ECMAScript|RegexOptions.Compiled);
+		private void butDownload_Click(object sender, EventArgs e)
+		{
+			var firstOne = _resList.OrderBy(m=>m.Folge).FirstOrDefault(m => m.Percentage == 0);
+			if (firstOne == null)
+			{
+				MessageBox.Show("No Download Left!");
+				return;
+			}
+
+			if (_fileNameRex.IsMatch(firstOne.VideoName))
+			{
+				var VidNameMatch = _fileNameRex.Match(firstOne.VideoName);
+				if (VidNameMatch.Groups.Count < 2)
+				{
+					MessageBox.Show("Video title doesn't match");
+					return;
+				}
+				var fileName = $"{VidNameMatch.Groups[1].Value} - {VidNameMatch.Groups[2].Value}.mp4";
+				var wv = new CustWebclient() { Proxy = null, Encoding = Encoding.UTF8, StateObject = firstOne };
+
+				wv.DownloadFileCompleted += (a, x) => {
+					var wbc = a as CustWebclient;
+					this.InvokeEx(m=>
+					{
+						var statObj = (int)wbc.StateObject;
+						var SelRow = m.dgvInfo.Rows.Cast<DataGridViewRow>().Where(x => Convert.ToInt32(x.Cells[0].Value) == statObj);
+					});
+				};
+				wv.DownloadProgressChanged += (a, x) =>
+				{
+					var wbc = a as CustWebclient;
+				};
+
+				Debugger.Break();
+			}
+			MessageBox.Show("Video title doesn't match");
+		}
+		
+		private void AddRange(IEnumerable<VideoInfo> input)
+		{
+			foreach (var item in input)
+			{
+				AddRow(item);
+			}
+		}
+		private void AddRow(VideoInfo input)
+		{
+			dgvInfo.AddRow<DataGridViewTextBoxCell>(new[] { input.Folge.ToString(), input.VideoName, input.VideoLink, input.Percentage.ToString() });
+		}
+
+
+
+		
 	}
 
 	public class VideoExtractor
@@ -90,7 +138,7 @@ namespace OnePiece_WebRipper
 		}
 	}
 
-	
+
 
 	public static class Extensions
 	{
@@ -134,8 +182,14 @@ namespace OnePiece_WebRipper
 		public int Folge { get; set; }
 		public string VideoName { get; set; }
 		public string VideoLink { get; set; }
+		public int Percentage { get; set; }
 		public Object StateObject { get; set; }
 	}
+	public class CustWebclient : WebClient
+	{
+		public object StateObject { get; set; }
+	}
+
 
 	public class VideoExtractorOld
 	{
