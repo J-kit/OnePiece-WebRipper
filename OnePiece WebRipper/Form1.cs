@@ -39,7 +39,7 @@ namespace OnePiece_WebRipper
 		private async void butResolve_Click(object sender, EventArgs e)
 		{
 			var start = 651;
-			var max = 700;
+			var max = 653;
 
 			for (int i = start; i < max; i++)
 			{
@@ -58,10 +58,11 @@ namespace OnePiece_WebRipper
 				dgvInfo.AutoResizeColumns();
 			}
 		}
-		private static Regex _fileNameRex = new Regex(@"(\d+).*?\| (.*)", RegexOptions.ECMAScript|RegexOptions.Compiled);
+
+		private static Regex _fileNameRex = new Regex(@"(\d+).*?\| (.*)", RegexOptions.ECMAScript | RegexOptions.Compiled);
 		private void butDownload_Click(object sender, EventArgs e)
 		{
-			var firstOne = _resList.OrderBy(m=>m.Folge).FirstOrDefault(m => m.Percentage == 0);
+			var firstOne = _resList.OrderBy(m => m.Folge).FirstOrDefault(m => m.Percentage == 0);
 			if (firstOne == null)
 			{
 				MessageBox.Show("No Download Left!");
@@ -79,39 +80,57 @@ namespace OnePiece_WebRipper
 				var fileName = $"{VidNameMatch.Groups[1].Value} - {VidNameMatch.Groups[2].Value}.mp4";
 				var wv = new CustWebclient() { Proxy = null, Encoding = Encoding.UTF8, StateObject = firstOne };
 
-				wv.DownloadFileCompleted += (a, x) => {
-					var wbc = a as CustWebclient;
-					this.InvokeEx(m=>
-					{
-						var statObj = (int)wbc.StateObject;
-						var SelRow = m.dgvInfo.Rows.Cast<DataGridViewRow>().Where(x => Convert.ToInt32(x.Cells[0].Value) == statObj);
-					});
-				};
-				wv.DownloadProgressChanged += (a, x) =>
+				wv.DownloadFileCompleted += (a, g) =>
 				{
 					var wbc = a as CustWebclient;
+					var statObj = wbc.StateObject as VideoInfo;
+					if (statObj == null)
+						return;
+
+					this.InvokeEx(m =>
+					{
+						
+						var SelRow = m.dgvInfo.Rows.Cast<DataGridViewRow>().FirstOrDefault(x => Convert.ToInt32(x.Cells[0].Value) == statObj.Folge);
+						if (SelRow != null)
+						{
+							SelRow.Cells[3].Value = "100 %";
+						}
+						MessageBox.Show("File Download Completed");
+					});
+				};
+				wv.DownloadProgressChanged += (a, g) =>
+				{
+					var wbc = a as CustWebclient;
+					var statObj = wbc.StateObject as VideoInfo;
+					if (statObj != null)
+					{
+						this.InvokeEx(m =>
+						{
+							var SelRow = m.dgvInfo.Rows.Cast<DataGridViewRow>().FirstOrDefault(x => Convert.ToInt32(x.Cells[0].Value) == statObj.Folge);
+							if (SelRow != null)
+							{
+								SelRow.Cells[3].Value = $"{g.ProgressPercentage} %";
+							}
+						});
+					}
 				};
 
+				wv.DownloadFileAsync(new Uri(firstOne.VideoLink), fileName);
 				Debugger.Break();
 			}
 			MessageBox.Show("Video title doesn't match");
 		}
-		
+
 		private void AddRange(IEnumerable<VideoInfo> input)
 		{
-			foreach (var item in input)
-			{
-				AddRow(item);
-			}
+			var sel = input.Select(m => new[] { m.Folge.ToString(), m.VideoName, m.VideoLink, m.Percentage.ToString() });
+			dgvInfo.AddRows<DataGridViewTextBoxCell>(sel);
 		}
+
 		private void AddRow(VideoInfo input)
 		{
 			dgvInfo.AddRow<DataGridViewTextBoxCell>(new[] { input.Folge.ToString(), input.VideoName, input.VideoLink, input.Percentage.ToString() });
 		}
-
-
-
-		
 	}
 
 	public class VideoExtractor
@@ -138,16 +157,24 @@ namespace OnePiece_WebRipper
 		}
 	}
 
-
-
 	public static class Extensions
 	{
 		public static void AddRow<T>(this DataGridView dgv, string[] input) where T : DataGridViewCell, new()
 		{
+			dgv.Rows.Add(GetRow<T>(input));
+		}
+
+		public static void AddRows<T>(this DataGridView dgv, IEnumerable<string[]> input) where T : DataGridViewCell, new()
+		{
+			var resRows = input.Select(m => GetRow<T>(m)).ToArray();
+			dgv.Rows.AddRange(resRows);
+		}
+		public static DataGridViewRow GetRow<T>(string[] input) where T : DataGridViewCell, new()
+		{
 			var row = new DataGridViewRow();
 			var cells = input.Select(m => new T { Value = m }).Cast<DataGridViewCell>().ToArray();
 			row.Cells.AddRange(cells);
-			dgv.Rows.Add(row);
+			return row;
 		}
 
 		public static void DownloadStringAsync(this WebClient srcWeb, string uri) => srcWeb.DownloadStringAsync(new Uri(uri));
@@ -185,11 +212,11 @@ namespace OnePiece_WebRipper
 		public int Percentage { get; set; }
 		public Object StateObject { get; set; }
 	}
+
 	public class CustWebclient : WebClient
 	{
 		public object StateObject { get; set; }
 	}
-
 
 	public class VideoExtractorOld
 	{
