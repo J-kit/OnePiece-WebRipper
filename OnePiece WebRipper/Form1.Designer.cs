@@ -48,7 +48,7 @@
 			this.butDownload.TabIndex = 0;
 			this.butDownload.Text = "Download";
 			this.butDownload.UseVisualStyleBackColor = true;
-			this.butDownload.Click += new System.EventHandler(this.butDownload_Click);
+			this.butDownload.Click += new System.EventHandler(this.butDownload_ClickAsync);
 			// 
 			// dgvInfo
 			// 

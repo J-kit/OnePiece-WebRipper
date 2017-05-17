@@ -17,8 +17,15 @@ namespace OnePiece_WebRipper
 		public Form1()
 		{
 			InitializeComponent();
+
+			VideoExtractor.GetCurEpisode().ContinueWith(m => this.InvokeEx(x =>
+			{
+				x.CurMaxEpisode = m.Result;
+				x.Text = $"Video extractor, {m.Result} videos avaiable.";
+			}));
 		}
 
+		public int CurMaxEpisode = -1;
 		private List<VideoInfo> _resList = new List<VideoInfo>();
 
 		private void Form1_Load(object sender, EventArgs e)
@@ -43,30 +50,59 @@ namespace OnePiece_WebRipper
 
 			for (int i = start; i < max; i++)
 			{
-				if (_resList.Any(m => m.Folge == i))
-				{
-					continue;
-				}
-				var erg = (await VideoExtractor.DoExtractAsync2($"http://onepiece-tube.com/folge/{i}")).ToArray();
-				foreach (var item in erg)
-				{
-					item.Folge = i;
-					AddRow(item);
-				}
-				_resList.AddRange(erg);
-				File.AppendAllText("Results.txt", Newtonsoft.Json.JsonConvert.SerializeObject(erg) + Environment.NewLine);
-				dgvInfo.AutoResizeColumns();
+				await ResolveID(i);
 			}
 		}
+		private async Task ResolveID(int episode)
+		{
+			if (_resList.Any(m => m.Episode == episode))
+			{
+				return;
+			}
+			var erg = (await VideoExtractor.DoExtractAsync($"http://onepiece-tube.com/folge/{episode}")).ToArray();
+			foreach (var item in erg)
+			{
+				item.Episode = episode;
+				AddRow(item);
+			}
+			_resList.AddRange(erg);
+			File.AppendAllText("Results.txt", Newtonsoft.Json.JsonConvert.SerializeObject(erg) + Environment.NewLine);
+			dgvInfo.AutoResizeColumns();
+		}
+
 
 		private static Regex _fileNameRex = new Regex(@"(\d+).*?\| (.*)", RegexOptions.ECMAScript | RegexOptions.Compiled);
-		private void butDownload_Click(object sender, EventArgs e)
+		private async void butDownload_ClickAsync(object sender, EventArgs e)
 		{
-			var firstOne = _resList.OrderBy(m => m.Folge).FirstOrDefault(m => m.Percentage == 0);
+			var firstOne = _resList.OrderBy(m => m.Episode).FirstOrDefault(m => m.Percentage == 0);
 			if (firstOne == null)
 			{
-				MessageBox.Show("No Download Left!");
-				return;
+
+				var nextEpisode = _resList.Max(m => m.Episode) + 1;
+				if (CurMaxEpisode != -1)
+				{
+					if (nextEpisode > CurMaxEpisode)
+					{
+						MessageBox.Show("No Download Left!");
+						return;
+					}
+					else
+					{
+						await ResolveID(nextEpisode);
+						firstOne = _resList.OrderBy(m => m.Episode).FirstOrDefault(m => m.Percentage == 0);
+						if (firstOne == null)
+						{
+							MessageBox.Show("Error!");
+							return;
+						}
+					}
+				}
+				else
+				{
+					MessageBox.Show("No Download Left!");
+					return;
+					
+				}
 			}
 
 			if (_fileNameRex.IsMatch(firstOne.VideoName))
@@ -78,6 +114,14 @@ namespace OnePiece_WebRipper
 					return;
 				}
 				var fileName = $"{VidNameMatch.Groups[1].Value} - {VidNameMatch.Groups[2].Value}.mp4";
+				if (File.Exists(fileName))
+				{
+					firstOne.Percentage = 100;
+					var fSelRow = dgvInfo.Rows.Cast<DataGridViewRow>().FirstOrDefault(x => Convert.ToInt32(x.Cells[0].Value) == firstOne.Episode);
+					fSelRow.Cells[3].Value = $"{firstOne.Percentage} %";
+					butDownload.PerformClick();
+					return;
+				}
 				var wv = new CustWebclient() { Proxy = null, Encoding = Encoding.UTF8, StateObject = firstOne };
 
 				wv.DownloadFileCompleted += (a, g) =>
@@ -86,50 +130,53 @@ namespace OnePiece_WebRipper
 					var statObj = wbc.StateObject as VideoInfo;
 					if (statObj == null)
 						return;
-
+					new Action(() => { MessageBox.Show($"File \"{statObj.VideoName}\" Download Completed"); }).BeginInvoke(null, this);
 					this.InvokeEx(m =>
 					{
-						
-						var SelRow = m.dgvInfo.Rows.Cast<DataGridViewRow>().FirstOrDefault(x => Convert.ToInt32(x.Cells[0].Value) == statObj.Folge);
+						statObj.Percentage = 100;
+						var SelRow = m.dgvInfo.Rows.Cast<DataGridViewRow>().FirstOrDefault(x => Convert.ToInt32(x.Cells[0].Value) == statObj.Episode);
 						if (SelRow != null)
-						{
-							SelRow.Cells[3].Value = "100 %";
-						}
-						MessageBox.Show("File Download Completed");
+							SelRow.Cells[3].Value = $"{statObj.Percentage} %";
+
+						butDownload.PerformClick();
 					});
 				};
+
 				wv.DownloadProgressChanged += (a, g) =>
 				{
 					var wbc = a as CustWebclient;
 					var statObj = wbc.StateObject as VideoInfo;
 					if (statObj != null)
 					{
+						statObj.Percentage = g.ProgressPercentage;
 						this.InvokeEx(m =>
 						{
-							var SelRow = m.dgvInfo.Rows.Cast<DataGridViewRow>().FirstOrDefault(x => Convert.ToInt32(x.Cells[0].Value) == statObj.Folge);
+							var SelRow = m.dgvInfo.Rows.Cast<DataGridViewRow>().FirstOrDefault(x => Convert.ToInt32(x.Cells[0].Value) == statObj.Episode);
 							if (SelRow != null)
-							{
-								SelRow.Cells[3].Value = $"{g.ProgressPercentage} %";
-							}
+								SelRow.Cells[3].Value = $"{statObj.Percentage} %";
+
 						});
 					}
 				};
 
 				wv.DownloadFileAsync(new Uri(firstOne.VideoLink), fileName);
-				Debugger.Break();
+				//Debugger.Break();
 			}
-			MessageBox.Show("Video title doesn't match");
+			else
+			{
+				MessageBox.Show("Video title doesn't match, no suiting file found");
+			}
 		}
 
 		private void AddRange(IEnumerable<VideoInfo> input)
 		{
-			var sel = input.Select(m => new[] { m.Folge.ToString(), m.VideoName, m.VideoLink, m.Percentage.ToString() });
+			var sel = input.Select(m => new[] { m.Episode.ToString(), m.VideoName, m.VideoLink, m.Percentage.ToString() });
 			dgvInfo.AddRows<DataGridViewTextBoxCell>(sel);
 		}
 
 		private void AddRow(VideoInfo input)
 		{
-			dgvInfo.AddRow<DataGridViewTextBoxCell>(new[] { input.Folge.ToString(), input.VideoName, input.VideoLink, input.Percentage.ToString() });
+			dgvInfo.AddRow<DataGridViewTextBoxCell>(new[] { input.Episode.ToString(), input.VideoName, input.VideoLink, input.Percentage.ToString() });
 		}
 	}
 
@@ -138,8 +185,16 @@ namespace OnePiece_WebRipper
 		private static Regex _rgxOpTubeAniStream = new Regex(@"<iframe src=""(.*?)"".*?<\/ifram", RegexOptions.Compiled | RegexOptions.ECMAScript);
 		private static Regex _rgxOpMp4 = new Regex(@"file: ['""](.*?.mp4)[""']", RegexOptions.Compiled | RegexOptions.ECMAScript);
 		private static Regex _rgxTitle = new Regex(@"<title>(.*?)<\/title>", RegexOptions.Compiled | RegexOptions.ECMAScript);
+		private static Regex _rgxEpisodeMax = new Regex(@"<b>Anime Folge (\d+)", RegexOptions.Compiled | RegexOptions.ECMAScript);
 
-		public static async Task<IEnumerable<VideoInfo>> DoExtractAsync2(string opTubeLink)
+		public static async Task<int> GetCurEpisode()
+		{
+			var wsString = await (new WebClient() { Proxy = null, Encoding = Encoding.UTF8 }).DownloadStringTaskAsync("http://onepiece-tube.com/");
+			var epiMax = _rgxEpisodeMax.Match(wsString)?.Groups[1].Value;
+			return Convert.ToInt32(epiMax);
+		}
+
+		public static async Task<IEnumerable<VideoInfo>> DoExtractAsync(string opTubeLink)
 		{
 			var wsString = await (new WebClient() { Proxy = null, Encoding = Encoding.UTF8 }).DownloadStringTaskAsync(opTubeLink);
 			var prVal = _rgxOpTubeAniStream.MatchesMinGroups(wsString, 1);
@@ -206,7 +261,7 @@ namespace OnePiece_WebRipper
 
 	public class VideoInfo
 	{
-		public int Folge { get; set; }
+		public int Episode { get; set; }
 		public string VideoName { get; set; }
 		public string VideoLink { get; set; }
 		public int Percentage { get; set; }
