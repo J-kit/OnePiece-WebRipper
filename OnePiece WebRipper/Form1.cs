@@ -10,6 +10,8 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Newtonsoft.Json;
+using RipLib;
+
 namespace OnePiece_WebRipper
 {
 	public partial class Form1 : Form
@@ -38,7 +40,7 @@ namespace OnePiece_WebRipper
 				{
 					rsLst.Add(JsonConvert.DeserializeObject<VideoInfo[]>(item));
 				}
-				_resList.AddRange(rsLst.SelectMany(m => m).Distinct().OrderBy(m => m.VideoName));
+				_resList.AddRange(rsLst.SelectMany(m => m).Distinct().Select(m => { m.IsDownloading = false; return m; }).OrderBy(m => m.VideoName));
 			}
 			AddRange(_resList);
 		}
@@ -53,6 +55,7 @@ namespace OnePiece_WebRipper
 				await ResolveID(i);
 			}
 		}
+
 		private async Task ResolveID(int episode)
 		{
 			if (_resList.Any(m => m.Episode == episode))
@@ -66,18 +69,20 @@ namespace OnePiece_WebRipper
 				AddRow(item);
 			}
 			_resList.AddRange(erg);
-			File.AppendAllText("Results.txt", Newtonsoft.Json.JsonConvert.SerializeObject(erg) + Environment.NewLine);
+			File.AppendAllText("Results.txt", JsonConvert.SerializeObject(erg) + Environment.NewLine);
 			dgvInfo.AutoResizeColumns();
 		}
 
-
 		private static Regex _fileNameRex = new Regex(@"(\d+).*?\| (.*)", RegexOptions.ECMAScript | RegexOptions.Compiled);
+
 		private async void butDownload_ClickAsync(object sender, EventArgs e)
 		{
-			var firstOne = _resList.OrderBy(m => m.Episode).FirstOrDefault(m => m.Percentage == 0);
+			if (!_resList.Any())
+				await ResolveID(650);
+
+			var firstOne = _resList.OrderBy(m => m.Episode).FirstOrDefault(m => m.Percentage == 0 && !m.IsDownloading);
 			if (firstOne == null)
 			{
-
 				var nextEpisode = _resList.Max(m => m.Episode) + 1;
 				if (CurMaxEpisode != -1)
 				{
@@ -101,10 +106,9 @@ namespace OnePiece_WebRipper
 				{
 					MessageBox.Show("No Download Left!");
 					return;
-					
 				}
 			}
-
+			firstOne.IsDownloading = true;
 			if (_fileNameRex.IsMatch(firstOne.VideoName))
 			{
 				var VidNameMatch = _fileNameRex.Match(firstOne.VideoName);
@@ -154,7 +158,6 @@ namespace OnePiece_WebRipper
 							var SelRow = m.dgvInfo.Rows.Cast<DataGridViewRow>().FirstOrDefault(x => Convert.ToInt32(x.Cells[0].Value) == statObj.Episode);
 							if (SelRow != null)
 								SelRow.Cells[3].Value = $"{statObj.Percentage} %";
-
 						});
 					}
 				};
@@ -178,249 +181,5 @@ namespace OnePiece_WebRipper
 		{
 			dgvInfo.AddRow<DataGridViewTextBoxCell>(new[] { input.Episode.ToString(), input.VideoName, input.VideoLink, input.Percentage.ToString() });
 		}
-	}
-
-	public class VideoExtractor
-	{
-		private static Regex _rgxOpTubeAniStream = new Regex(@"<iframe src=""(.*?)"".*?<\/ifram", RegexOptions.Compiled | RegexOptions.ECMAScript);
-		private static Regex _rgxOpMp4 = new Regex(@"file: ['""](.*?.mp4)[""']", RegexOptions.Compiled | RegexOptions.ECMAScript);
-		private static Regex _rgxTitle = new Regex(@"<title>(.*?)<\/title>", RegexOptions.Compiled | RegexOptions.ECMAScript);
-		private static Regex _rgxEpisodeMax = new Regex(@"<b>Anime Folge (\d+)", RegexOptions.Compiled | RegexOptions.ECMAScript);
-
-		public static async Task<int> GetCurEpisode()
-		{
-			var wsString = await (new WebClient() { Proxy = null, Encoding = Encoding.UTF8 }).DownloadStringTaskAsync("http://onepiece-tube.com/");
-			var epiMax = _rgxEpisodeMax.Match(wsString)?.Groups[1].Value;
-			return Convert.ToInt32(epiMax);
-		}
-
-		public static async Task<IEnumerable<VideoInfo>> DoExtractAsync(string opTubeLink)
-		{
-			var wsString = await (new WebClient() { Proxy = null, Encoding = Encoding.UTF8 }).DownloadStringTaskAsync(opTubeLink);
-			var prVal = _rgxOpTubeAniStream.MatchesMinGroups(wsString, 1);
-			var value = prVal.Select(a => a.Groups[1].Value).LastOrDefault(x => x.Contains("ani-stream.com"));
-			var videoName = _rgxTitle.MatchesMinGroups(wsString, 1).FirstOrDefault()?.Groups[1].Value;
-
-			var videoString = await (new WebClient() { Proxy = null, Encoding = Encoding.UTF8 }).DownloadStringTaskAsync(value);
-			var res = _rgxOpMp4.MatchesMinGroups(videoString, 1);
-
-			return res.Select(m => new VideoInfo()
-			{
-				VideoLink = m.Groups[1].Value,
-				VideoName = videoName,
-			});
-		}
-	}
-
-	public static class Extensions
-	{
-		public static void AddRow<T>(this DataGridView dgv, string[] input) where T : DataGridViewCell, new()
-		{
-			dgv.Rows.Add(GetRow<T>(input));
-		}
-
-		public static void AddRows<T>(this DataGridView dgv, IEnumerable<string[]> input) where T : DataGridViewCell, new()
-		{
-			var resRows = input.Select(m => GetRow<T>(m)).ToArray();
-			dgv.Rows.AddRange(resRows);
-		}
-		public static DataGridViewRow GetRow<T>(string[] input) where T : DataGridViewCell, new()
-		{
-			var row = new DataGridViewRow();
-			var cells = input.Select(m => new T { Value = m }).Cast<DataGridViewCell>().ToArray();
-			row.Cells.AddRange(cells);
-			return row;
-		}
-
-		public static void DownloadStringAsync(this WebClient srcWeb, string uri) => srcWeb.DownloadStringAsync(new Uri(uri));
-
-		public static IEnumerable<Match> MatchesMinGroups(this Regex input, string source, int minCount)
-			=> input.Matches(source).MinGroups(minCount);
-
-		/// <summary>
-		/// Returns all Matches which Groups atleast contains <see cref="minCount"/> Values
-		/// </summary>
-		/// <param name="input"></param>
-		/// <param name="minCount"></param>
-		/// <returns></returns>
-		public static IEnumerable<Match> MinGroups(this MatchCollection input, int minCount)
-			=> input.Cast<Match>().Where(m => m.Groups.Count >= minCount);
-	}
-
-	public static class InvokeExtentions
-	{
-		public static TResult InvokeEx<TControl, TResult>(this TControl control, Func<TControl, TResult> func) where TControl : Control
-			=> control.InvokeRequired ? (TResult)control.Invoke(func, control) : func(control);
-
-		public static void InvokeEx<TControl>(this TControl control, Action<TControl> func) where TControl : Control
-			=> control.InvokeEx(c => { func(c); return c; });
-
-		public static void InvokeEx<TControl>(this TControl control, Action action) where TControl : Control
-			=> control.InvokeEx(c => action());
-	}
-
-	public class VideoInfo
-	{
-		public int Episode { get; set; }
-		public string VideoName { get; set; }
-		public string VideoLink { get; set; }
-		public int Percentage { get; set; }
-		public Object StateObject { get; set; }
-	}
-
-	public class CustWebclient : WebClient
-	{
-		public object StateObject { get; set; }
-	}
-
-	public class VideoExtractorOld
-	{
-		private static Regex _rgxOpTubeAniStream = new Regex(@"<iframe src=""(.*?)"".*?<\/ifram", RegexOptions.Compiled | RegexOptions.ECMAScript);
-		private static Regex _rgxOpMp4 = new Regex(@"file: ['""](.*?.mp4)[""']", RegexOptions.Compiled | RegexOptions.ECMAScript);
-		private static Regex _rgxTitle = new Regex(@"<title>(.*?)<\/title>", RegexOptions.Compiled | RegexOptions.ECMAScript);
-
-		private string _opTubeLink;
-		private object _stateObj;
-
-		public VideoExtractorOld(string opTubeLink, object stateObject = null)
-		{
-			_opTubeLink = opTubeLink;
-			_stateObj = stateObject;
-		}
-
-		public VideoExtractorOld(int episode, object stateObject = null)
-		{
-			_opTubeLink = $"http://onepiece-tube.com/folge/{episode}";
-			_stateObj = stateObject ?? episode;
-		}
-
-		public VideoInfo[] DoExtract()
-		{
-			string source = new WebClient { Proxy = null, Encoding = Encoding.UTF8 }.DownloadString(_opTubeLink);
-			var value = _rgxOpTubeAniStream.MatchesMinGroups(source, 1).Select(m => m.Groups[1].Value);
-			var videoName = _rgxTitle.MatchesMinGroups(source, 1).FirstOrDefault()?.Groups[1].Value;
-
-			var mTasks = value.Select(val => Task.Run(() => new WebClient() { Proxy = null, Encoding = Encoding.UTF8 }.DownloadString(val)).ContinueWith(task => (task.Status == TaskStatus.RanToCompletion) ? _rgxOpMp4.MatchesMinGroups(task.Result, 1).FirstOrDefault()?.Groups[1].Value ?? string.Empty : string.Empty)).ToArray();
-
-			Task.WaitAll(mTasks);
-
-			return mTasks.Where(m => m.IsFaulted == false && m.Result != string.Empty).Select(m => new VideoInfo()
-			{
-				VideoLink = m.Result,
-				VideoName = videoName,
-				StateObject = _stateObj
-			}).ToArray();
-		}
-
-
-
-		public void DoExtractAsync(Action<VideoInfo> asyncCbx)
-		{
-			Task.Run(() => new WebClient() { Proxy = null, Encoding = Encoding.UTF8 }.DownloadString(_opTubeLink)).ContinueWith(
-					m =>
-					{
-						if (m.IsFaulted) asyncCbx(null);
-						var source = m.Result;
-						var prVal = _rgxOpTubeAniStream.MatchesMinGroups(source, 1);
-						var value = prVal.Select(a => a.Groups[1].Value).LastOrDefault(x => x.Contains("ani-stream.com"));
-						var videoName = _rgxTitle.MatchesMinGroups(source, 1).FirstOrDefault()?.Groups[1].Value;
-						var erg = Task.Run(() => new WebClient() { Proxy = null, Encoding = Encoding.UTF8 }.DownloadString(value) + _opTubeLink + "\n" + value);
-						erg.ContinueWith(task =>
-						{
-							if (task.Status == TaskStatus.RanToCompletion)
-							{
-								var res = _rgxOpMp4.MatchesMinGroups(task.Result, 1).FirstOrDefault();
-								if (res != null)
-								{
-									return res.Groups[1].Value;
-								}
-								return string.Empty;
-							}
-							return string.Empty;
-						}).ContinueWith(t =>
-						{
-							if (!t.IsFaulted && t.Result != string.Empty && asyncCbx != null)
-							{
-								asyncCbx(new VideoInfo()
-								{
-									VideoLink = t.Result,
-									VideoName = videoName,
-									StateObject = _stateObj
-								});
-							}
-							else
-							{
-								Debugger.Break();
-							}
-						});
-					});
-		}
-
-		//	return;
-		//		Action<VideoInfo> OnSucc = m =>
-		//		{
-		//			if (m == null)
-		//			{
-		//				Debugger.Break();
-		//			}
-		//			this.InvokeEx(() =>
-		//			{
-		//				_resList.Add(m);
-		//				File.AppendAllText("Results.txt", Newtonsoft.Json.JsonConvert.SerializeObject(m) + Environment.NewLine);
-		//				dgvInfo.AddRow<DataGridViewTextBoxCell>(new[] { m.StateObject.ToString(), m.VideoName, m.VideoLink, "0" });
-		//				dgvInfo.AutoResizeColumns();
-		//			});
-		//		};
-
-		//	start = 651;
-		//		 max = 700;
-		//		var lauf = start;
-		//		while (lauf<max)
-		//		{
-		//			for (int i = 0; i< 10; i++)
-		//			{
-		//				new VideoExtractor(lauf).DoExtractAsync(OnSucc);
-		//	lauf++;
-		//			}
-
-		//await Task.Delay(TimeSpan.FromSeconds(2));
-		//		}
-		private void DoStart(Action<VideoInfo> OnSucc, int start, int end, int steps)
-		{
-			//var le = new Action<Action<VideoInfo>, int, int, int>(DoStart);
-
-			//var max = end;
-			//for (int i = start; i < max; i++)
-			//{
-			//	var j = i;
-			//	for (j = i; j < i + steps; j++)
-			//	{
-			//		new VideoExtractor(j).DoExtractAsync(OnSucc);
-			//	}
-			//	i = j;
-			//	if (i < max)
-			//	{
-			//		Task.Delay(TimeSpan.FromSeconds(10)).ContinueWith(x =>
-			//		{
-			//			Debugger.Break();
-			//			DoStart(OnSucc, i, max, steps);
-			//		});
-
-			//		return;
-			//	}
-			//}
-
-		}
-		private string extract_videosrc(string uri)
-		{
-			WebClient wc = new WebClient { Proxy = null };
-			string tmp = wc.DownloadString(uri);
-			string value = (Regex.Match(tmp, @"ani-stream.com/(.*?).html").Groups[1].Value);
-			string dsttmp = wc.DownloadString("http://www.ani-stream.com/" + value + ".html");
-
-			string value2 = (Regex.Match(dsttmp, @"file: ['""](.*?.mp4)[""']").Groups[1].Value);
-			return value2;
-		}
-
 	}
 }
