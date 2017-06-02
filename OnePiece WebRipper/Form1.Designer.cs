@@ -40,8 +40,7 @@
 			// 
 			// butDownload
 			// 
-			this.butDownload.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left) 
-            | System.Windows.Forms.AnchorStyles.Right)));
+			this.butDownload.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)));
 			this.butDownload.Location = new System.Drawing.Point(299, 471);
 			this.butDownload.Name = "butDownload";
 			this.butDownload.Size = new System.Drawing.Size(246, 23);
@@ -88,8 +87,7 @@
 			// 
 			// butResolve
 			// 
-			this.butResolve.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left) 
-            | System.Windows.Forms.AnchorStyles.Right)));
+			this.butResolve.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)));
 			this.butResolve.Location = new System.Drawing.Point(33, 471);
 			this.butResolve.Name = "butResolve";
 			this.butResolve.Size = new System.Drawing.Size(246, 23);

@@ -78,7 +78,7 @@ namespace OnePiece_WebRipper
 		private async void butDownload_ClickAsync(object sender, EventArgs e)
 		{
 			if (!_resList.Any())
-				await ResolveID(650);
+				await ResolveID(733);
 
 			var firstOne = _resList.OrderBy(m => m.Episode).FirstOrDefault(m => m.Percentage == 0 && !m.IsDownloading);
 			if (firstOne == null)
@@ -134,7 +134,7 @@ namespace OnePiece_WebRipper
 					var statObj = wbc.StateObject as VideoInfo;
 					if (statObj == null)
 						return;
-					new Action(() => { MessageBox.Show($"File \"{statObj.VideoName}\" Download Completed"); }).BeginInvoke(null, this);
+					//new Action(() => { MessageBox.Show($"File \"{statObj.VideoName}\" Download Completed"); }).BeginInvoke(null, this);
 					this.InvokeEx(m =>
 					{
 						statObj.Percentage = 100;

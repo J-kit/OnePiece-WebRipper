@@ -11,7 +11,10 @@ namespace RipLib
 {
 	public class VideoExtractor
 	{
-		private static Regex _rgxOpTubeAniStream = new Regex(@"<iframe src=""(.*?)"".*?<\/ifram", RegexOptions.Compiled | RegexOptions.ECMAScript);
+		//"*ani-stream\.com\/(.*?)"
+		//<iframe src=""(.*?)"".*?<\/ifram
+		private static Regex _rgxOpTubeAniStream = new Regex(@"""*ani-stream\.com\/(.*?)""", RegexOptions.Compiled | RegexOptions.ECMAScript);
+
 		private static Regex _rgxOpMp4 = new Regex(@"file: ['""](.*?.mp4)[""']", RegexOptions.Compiled | RegexOptions.ECMAScript);
 		private static Regex _rgxTitle = new Regex(@"<title>(.*?)<\/title>", RegexOptions.Compiled | RegexOptions.ECMAScript);
 		private static Regex _rgxEpisodeMax = new Regex(@"<b>Anime Folge (\d+)", RegexOptions.Compiled | RegexOptions.ECMAScript);
@@ -27,17 +30,21 @@ namespace RipLib
 		{
 			var wsString = await (new WebClient() { Proxy = null, Encoding = Encoding.UTF8 }).DownloadStringTaskAsync(opTubeLink);
 			var prVal = _rgxOpTubeAniStream.MatchesMinGroups(wsString, 1);
-			var value = prVal.Select(a => a.Groups[1].Value).LastOrDefault(x => x.Contains("ani-stream.com"));
+			var value = prVal.Select(a => a.Groups[1].Value).LastOrDefault();
 			var videoName = _rgxTitle.MatchesMinGroups(wsString, 1).FirstOrDefault()?.Groups[1].Value;
 
-			var videoString = await (new WebClient() { Proxy = null, Encoding = Encoding.UTF8 }).DownloadStringTaskAsync(value);
-			var res = _rgxOpMp4.MatchesMinGroups(videoString, 1);
-
-			return res.Select(m => new VideoInfo()
+			if (value != null)
 			{
-				VideoLink = m.Groups[1].Value,
-				VideoName = videoName,
-			});
+				var videoString = await (new WebClient() { Proxy = null, Encoding = Encoding.UTF8 }).DownloadStringTaskAsync($"http://www.ani-stream.com/{value}");
+				var res = _rgxOpMp4.MatchesMinGroups(videoString, 1);
+
+				return res.Select(m => new VideoInfo()
+				{
+					VideoLink = m.Groups[1].Value,
+					VideoName = videoName,
+				});
+			}
+			return null;
 		}
 	}
 
