@@ -2,8 +2,8 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
-using System.Text.RegularExpressions;
+using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Newtonsoft.Json;
@@ -11,18 +11,23 @@ using RipLib;
 
 namespace OnePiece_WebRipper
 {
+    /// <summary>
+    /// VEERRY UGLY CODE;
+    /// DONT DO THAT AT HOME BOYYYS AND GUURRRLS
+    ///
+    /// (srsly; i cleaned up a bit...next time its gonna be a wpf tool using mvvm...promised)
+    /// </summary>
     public partial class Form1 : Form
     {
-        private static readonly Regex _fileNameRex =
-            new Regex(@"(\d+).*?\| (.*)", RegexOptions.ECMAScript | RegexOptions.Compiled);
-
-        private readonly List<VideoInfo> _resList = new List<VideoInfo>();
+        private readonly List<VideoInfo> _videoInfoList = new List<VideoInfo>();
 
         public int CurMaxEpisode = -1;
+        private HttpClient _httpClient;
 
         public Form1()
         {
             InitializeComponent();
+            _httpClient = new HttpClient();
 
             VideoExtractor.GetCurEpisode().ContinueWith(m => this.InvokeEx(x =>
             {
@@ -37,14 +42,14 @@ namespace OnePiece_WebRipper
             {
                 var lines = File.ReadAllLines("Results.txt");
                 var rsLst = lines.Select(JsonConvert.DeserializeObject<VideoInfo[]>).ToList();
-                _resList.AddRange(rsLst.SelectMany(m => m).Distinct().Select(m =>
+                _videoInfoList.AddRange(rsLst.SelectMany(m => m).Distinct().Select(m =>
                 {
                     m.IsDownloading = false;
                     return m;
                 }).OrderBy(m => m.VideoName));
             }
 
-            AddRange(_resList);
+            AddRange(_videoInfoList);
         }
 
         private async void butResolve_Click(object sender, EventArgs e)
@@ -54,13 +59,13 @@ namespace OnePiece_WebRipper
 
             for (var i = start; i < max; i++)
             {
-                await ResolveID(i);
+                await ResolveId(i);
             }
         }
 
-        private async Task ResolveID(int episode)
+        private async Task ResolveId(int episode)
         {
-            if (_resList.Any(m => m.Episode == episode)) return;
+            if (_videoInfoList.Any(m => m.Episode == episode)) return;
             var erg = (await VideoExtractor.DoExtractAsync($"http://onepiece-tube.com/folge/{episode}")).ToArray();
             foreach (var item in erg)
             {
@@ -68,108 +73,116 @@ namespace OnePiece_WebRipper
                 AddRow(item);
             }
 
-            _resList.AddRange(erg);
+            _videoInfoList.AddRange(erg);
             File.AppendAllText("Results.txt", JsonConvert.SerializeObject(erg) + Environment.NewLine);
             dgvInfo.AutoResizeColumns();
         }
 
         private async void butDownload_ClickAsync(object sender, EventArgs e)
         {
-            if (!_resList.Any())
-                await ResolveID(1);
-
-            var firstOne = _resList.OrderBy(m => m.Episode).FirstOrDefault(m => m.Percentage == 0 && !m.IsDownloading);
-            if (firstOne == null)
+            butDownload.Enabled = false;
+            try
             {
-                var nextEpisode = _resList.Max(m => m.Episode) + 1;
-                if (CurMaxEpisode != -1)
+                var taskList = new List<Task>();
+
+                var groupByHost = _videoInfoList.GroupBy(x => new Uri(x.VideoLink).Host).ToList();
+                while (_videoInfoList.Any(x => !x.IsDownloading))
                 {
-                    if (nextEpisode > CurMaxEpisode)
+                    foreach (var videoInfoList in groupByHost)
                     {
-                        MessageBox.Show("No Download Left!");
-                        return;
-                    }
-
-                    await ResolveID(nextEpisode);
-                    firstOne = _resList.OrderBy(m => m.Episode).FirstOrDefault(m => m.Percentage == 0);
-                    if (firstOne == null)
-                    {
-                        MessageBox.Show("Error!");
-                        return;
-                    }
-                }
-                else
-                {
-                    MessageBox.Show("No Download Left!");
-                    return;
-                }
-            }
-
-            firstOne.IsDownloading = true;
-            if (_fileNameRex.IsMatch(firstOne.VideoName))
-            {
-                var VidNameMatch = _fileNameRex.Match(firstOne.VideoName);
-                if (VidNameMatch.Groups.Count < 2)
-                {
-                    MessageBox.Show("Video title doesn't match");
-                    return;
-                }
-
-                var fileName = $"{VidNameMatch.Groups[1].Value} - {VidNameMatch.Groups[2].Value}.mp4";
-                if (File.Exists(fileName))
-                {
-                    firstOne.Percentage = 100;
-                    var fSelRow = dgvInfo.Rows.Cast<DataGridViewRow>()
-                        .FirstOrDefault(x => Convert.ToInt32(x.Cells[0].Value) == firstOne.Episode);
-                    fSelRow.Cells[3].Value = $"{firstOne.Percentage} %";
-                    butDownload.PerformClick();
-                    return;
-                }
-
-                var wv = new CustWebclient { Proxy = null, Encoding = Encoding.UTF8, StateObject = firstOne };
-
-                wv.DownloadFileCompleted += (a, g) =>
-                {
-                    var wbc = a as CustWebclient;
-                    var statObj = wbc.StateObject as VideoInfo;
-                    if (statObj == null)
-                        return;
-
-                    this.InvokeEx(m =>
-                    {
-                        statObj.Percentage = 100;
-                        var SelRow = m.dgvInfo.Rows.Cast<DataGridViewRow>()
-                            .FirstOrDefault(x => Convert.ToInt32(x.Cells[0].Value) == statObj.Episode);
-                        if (SelRow != null)
-                            SelRow.Cells[3].Value = $"{statObj.Percentage} %";
-
-                        butDownload.PerformClick();
-                    });
-                };
-
-                wv.DownloadProgressChanged += (a, g) =>
-                {
-                    var wbc = a as CustWebclient;
-                    var statObj = wbc.StateObject as VideoInfo;
-                    if (statObj != null)
-                    {
-                        statObj.Percentage = g.ProgressPercentage;
-                        this.InvokeEx(m =>
+                        var videoInfo = videoInfoList.FirstOrDefault(x => !x.IsDownloading);
+                        if (videoInfo == null)
                         {
-                            var SelRow = m.dgvInfo.Rows.Cast<DataGridViewRow>()
-                                .FirstOrDefault(x => Convert.ToInt32(x.Cells[0].Value) == statObj.Episode);
-                            if (SelRow != null)
-                                SelRow.Cells[3].Value = $"{statObj.Percentage} %";
-                        });
-                    }
-                };
+                            continue;
+                        }
 
-                wv.DownloadFileAsync(new Uri(firstOne.VideoLink), fileName);
-                //Debugger.Break();
+                        videoInfo.IsDownloading = true;
+                        var fSelRow = dgvInfo.Rows.Cast<DataGridViewRow>().FirstOrDefault(x => Convert.ToInt32(x.Cells[0].Value) == videoInfo.Episode)?.Cells[3];
+                        taskList.Add(DownloadFileWithStatusUpdateAsync(videoInfo, fSelRow));
+                    }
+
+                    this.Text = $"Downloading {taskList.Count} episodes";
+                    while (taskList.Count > 20)
+                    {
+                        var resultTask = await Task.WhenAny(taskList);
+                        await resultTask;
+                        taskList.Remove(resultTask);
+                    }
+                }
+                while (taskList.Count != 0)
+                {
+                    var resultTask = await Task.WhenAny(taskList);
+                    await resultTask;
+                    taskList.Remove(resultTask);
+                }
+
+                MessageBox.Show("Finished downloading!");
             }
-            else
+            finally
             {
-                MessageBox.Show("Video title doesn't match, no suiting file found");
+                butDownload.Enabled = true;
+            }
+        }
+
+        private async Task DownloadFileWithStatusUpdateAsync(VideoInfo videoInfo, DataGridViewCell statusCell, CancellationToken cancellationToken = default(CancellationToken))
+        {
+            try
+            {
+                var lastValue = "";
+
+                using (var response = await _httpClient.GetAsync(videoInfo.VideoLink, HttpCompletionOption.ResponseHeadersRead))
+                using (var inputStream = await response.Content.ReadAsStreamAsync())
+                {
+                    var contentLength = response.Content.Headers.ContentLength;
+
+                    if (File.Exists(videoInfo.FileName))
+                    {
+                        if (new FileInfo(videoInfo.FileName).Length >= contentLength && statusCell != null)
+                        {
+                            videoInfo.Percentage = 100;
+                            statusCell.Value = $"{videoInfo.Percentage} %";
+                            return;
+                        }
+
+                        File.Delete(videoInfo.FileName);
+                    }
+
+                    using (var outputStream = File.OpenWrite(videoInfo.FileName))
+                    {
+                        int bytesRead;
+                        long totalBytesRead = 0;
+
+                        byte[] buffer = new byte[8 * 1024 * 1024];
+                        while ((bytesRead = await inputStream.ReadAsync(buffer, 0, buffer.Length, cancellationToken).ConfigureAwait(false)) != 0)
+                        {
+                            outputStream.Write(buffer, 0, bytesRead);
+                            totalBytesRead += bytesRead;
+                            if (contentLength.HasValue && statusCell != null)
+                            {
+                                var percent = ((decimal)(totalBytesRead * 100)) / (decimal)contentLength;
+                                var nextValue = $"{percent:F1}";
+                                if (lastValue != nextValue)
+                                {
+                                    statusCell.Value = nextValue;
+                                    lastValue = nextValue;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                videoInfo.IsDownloading = false;
+                if (File.Exists(videoInfo.FileName))
+                {
+                    File.Delete(videoInfo.FileName);
+                }
+
+                if (statusCell != null)
+                {
+                    statusCell.Value = $"{videoInfo.Percentage} %";
+                }
             }
         }
 
